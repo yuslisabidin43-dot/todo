@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>To Do</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; }
+  input[type=text], input[type=date], select { padding: 8px; font-size: 16px; }
+  #input { flex: 1 1 100%; }
+  #category { flex: 1; min-width: 0; }
+  button { padding: 8px 12px; font-size: 16px; cursor: pointer; }
+  #filter-row { margin-top: 16px; color: #666; }
+  ul { list-style: none; padding: 0; }
+  li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #ddd; }
+  .main { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .text { overflow-wrap: anywhere; }
+  .meta { display: flex; gap: 8px; align-items: center; font-size: 13px; color: #666; }
+  .tag { background: #e8eefc; color: #234; border-radius: 10px; padding: 1px 8px; }
+  .overdue { color: #c00; font-weight: 600; }
+  li.done .text { text-decoration: line-through; color: #888; }
+  li.done .overdue { color: #888; font-weight: normal; }
+  li button { border: none; background: none; color: #c00; }
+  li button.edit { color: #555; }
+  li button { min-width: 40px; min-height: 40px; }
+  li input[type=checkbox] { width: 22px; height: 22px; flex: none; }
+  .editbox { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
+  .editbox .e-text { flex: 1 1 100%; }
+  .editbox .e-cat { flex: 1; min-width: 0; }
+  #count { color: #666; }
+</style>
+</head>
+<body>
+<h1 style="text-align:center">To Do</h1>
+<form id="form">
+  <input type="text" id="input" placeholder="What needs doing?" autofocus>
+  <input type="text" id="category" list="cats" placeholder="Category">
+  <input type="date" id="due" title="Due date (optional)">
+  <button type="submit">Add</button>
+</form>
+<datalist id="cats"></datalist>
+
+<div id="filter-row">
+  <label>Show: <select id="filter"></select></label>
+</div>
+<ul id="list"></ul>
+<p id="count"></p>
+
+<script>
+  let todos = [];
+  try { todos = JSON.parse(localStorage.getItem('todos')) || []; } catch (e) {}
+  // Older saved items have no category / due; normalize.
+  todos.forEach(t => { t.category = t.category || ''; t.due = t.due || ''; });
+
+  const list = document.getElementById('list');
+  const count = document.getElementById('count');
+  const filter = document.getElementById('filter');
+  const cats = document.getElementById('cats');
+
+  function save() {
+    try { localStorage.setItem('todos', JSON.stringify(todos)); } catch (e) {}
+  }
+
+  function todayStr() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  function fmtDate(s) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function categories() {
+    return [...new Set(todos.map(t => t.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }
+
+  function option(value, label) {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    return o;
+  }
+
+  function refreshCategories() {
+    const all = categories();
+    cats.textContent = '';
+    all.forEach(c => cats.appendChild(option(c, c)));
+
+    const current = filter.value || '__all';
+    filter.textContent = '';
+    filter.appendChild(option('__all', 'All'));
+    all.forEach(c => filter.appendChild(option(c, c)));
+    if (todos.some(t => !t.category)) filter.appendChild(option('__none', 'No category'));
+    filter.value = [...filter.options].some(o => o.value === current) ? current : '__all';
+  }
+
+  function matches(t) {
+    const f = filter.value;
+    if (f === '__all') return true;
+    if (f === '__none') return !t.category;
+    return t.category === f;
+  }
+
+  function startEdit(t, main) {
+    const box = document.createElement('div');
+    box.className = 'editbox';
+
+    const text = document.createElement('input');
+    text.type = 'text'; text.className = 'e-text'; text.value = t.text;
+    const cat = document.createElement('input');
+    cat.type = 'text'; cat.className = 'e-cat'; cat.value = t.category;
+    cat.setAttribute('list', 'cats'); cat.placeholder = 'Category';
+    const due = document.createElement('input');
+    due.type = 'date'; due.value = t.due;
+    box.append(text, cat, due);
+
+    main.replaceWith(box);
+    text.focus();
+    text.select();
+
+    let finished = false;
+    const finish = keep => {
+      if (finished) return;
+      finished = true;
+      const v = text.value.trim();
+      if (keep && v) {
+        t.text = v;
+        t.category = cat.value.trim();
+        t.due = due.value;
+        save();
+      }
+      render();
+    };
+    box.onkeydown = e => {
+      if (e.key === 'Enter') finish(true);
+      else if (e.key === 'Escape') finish(false);
+    };
+    box.addEventListener('focusout', e => {
+      if (!box.contains(e.relatedTarget)) finish(true);
+    });
+  }
+
+  function render() {
+    refreshCategories();
+    list.textContent = '';
+    const today = todayStr();
+    const visible = todos.filter(matches);
+
+    visible.forEach(t => {
+      const li = document.createElement('li');
+      if (t.done) li.className = 'done';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = t.done;
+      cb.onchange = () => { t.done = cb.checked; save(); render(); };
+
+      const main = document.createElement('div');
+      main.className = 'main';
+      const span = document.createElement('span');
+      span.className = 'text';
+      span.textContent = t.text;
+      main.appendChild(span);
+
+      if (t.category || t.due) {
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        if (t.category) {
+          const tag = document.createElement('span');
+          tag.className = 'tag';
+          tag.textContent = t.category;
+          meta.appendChild(tag);
+        }
+        if (t.due) {
+          const d = document.createElement('span');
+          const overdue = !t.done && t.due < today;
+          if (overdue) d.className = 'overdue';
+          d.textContent = (overdue ? 'Overdue: ' : t.due === today ? 'Due today: ' : 'Due: ') + fmtDate(t.due);
+          meta.appendChild(d);
+        }
+        main.appendChild(meta);
+      }
+      main.ondblclick = () => startEdit(t, main);
+
+      const edit = document.createElement('button');
+      edit.textContent = '✎';
+      edit.title = 'Edit';
+      edit.className = 'edit';
+      edit.onclick = () => startEdit(t, main);
+
+      const del = document.createElement('button');
+      del.textContent = '×';
+      del.title = 'Delete';
+      del.onclick = () => { todos.splice(todos.indexOf(t), 1); save(); render(); };
+
+      li.append(cb, main, edit, del);
+      list.appendChild(li);
+    });
+
+    const left = visible.filter(t => !t.done).length;
+    count.textContent = left + (left === 1 ? ' item left' : ' items left');
+  }
+
+  filter.onchange = render;
+
+  document.getElementById('form').onsubmit = e => {
+    e.preventDefault();
+    const input = document.getElementById('input');
+    const category = document.getElementById('category');
+    const due = document.getElementById('due');
+    const text = input.value.trim();
+    if (!text) return;
+    todos.push({ text, done: false, category: category.value.trim(), due: due.value });
+    input.value = '';
+    category.value = '';
+    due.value = '';
+    save();
+    render();
+    input.focus();
+  };
+
+  render();
+</script>
+</body>
+</html>
